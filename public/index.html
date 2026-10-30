@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent-work</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">🤖</span> Agent-work</div>
+    <div class="meta" id="meta"></div>
+    <div class="actions">
+      <button id="stopBtn" class="ghost" disabled>■ 停止</button>
+      <button id="resetBtn" class="ghost">＋ 新對話</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="office" aria-label="Agent 狀態">
+      <div class="scene" id="scene" data-status="idle">
+        <div class="window"><div class="sky" id="sky"></div></div>
+        <div class="bubble" id="bubble"></div>
+        <svg class="desk-svg" viewBox="0 0 240 200" aria-hidden="true">
+          <!-- chair -->
+          <rect x="70" y="118" width="46" height="8" rx="3" class="chair"/>
+          <rect x="90" y="126" width="6" height="40" class="chair"/>
+          <!-- agent -->
+          <g class="person">
+            <rect x="76" y="78" width="34" height="42" rx="10" class="shirt"/>
+            <circle cx="93" cy="62" r="16" class="skin"/>
+            <rect x="80" y="44" width="26" height="10" rx="5" class="hair"/>
+            <circle cx="88" cy="63" r="2" class="eye"/>
+            <circle cx="99" cy="63" r="2" class="eye"/>
+            <g class="arm-left"><rect x="104" y="88" width="34" height="8" rx="4" class="shirt"/></g>
+            <g class="arm-raise"><rect x="72" y="40" width="8" height="44" rx="4" class="shirt"/><circle cx="76" cy="38" r="5" class="skin"/></g>
+          </g>
+          <!-- desk -->
+          <rect x="40" y="120" width="180" height="10" rx="2" class="desk"/>
+          <rect x="50" y="130" width="8" height="50" class="desk-leg"/>
+          <rect x="202" y="130" width="8" height="50" class="desk-leg"/>
+          <!-- monitor -->
+          <rect x="140" y="64" width="70" height="48" rx="4" class="monitor"/>
+          <rect x="171" y="112" width="8" height="8" class="monitor"/>
+          <clipPath id="screenClip"><rect x="145" y="69" width="60" height="38"/></clipPath>
+          <rect x="145" y="69" width="60" height="38" class="screen"/>
+          <g clip-path="url(#screenClip)"><g class="code" id="code"></g></g>
+          <!-- keyboard + mug -->
+          <rect x="128" y="114" width="40" height="5" rx="2" class="keyboard"/>
+          <rect x="56" y="106" width="12" height="14" rx="2" class="mug"/>
+        </svg>
+      </div>
+      <div class="status-card">
+        <div class="status-line"><span class="dot" id="dot"></span><strong id="statusText">閒置中</strong><span class="timer" id="timer"></span></div>
+        <div class="status-detail" id="statusDetail">給我一個任務，我會自己規劃步驟、使用工具完成它。</div>
+        <dl class="usage">
+          <div><dt>輸入 tokens</dt><dd id="uIn">0</dd></div>
+          <div><dt>快取讀取</dt><dd id="uCache">0</dd></div>
+          <div><dt>輸出 tokens</dt><dd id="uOut">0</dd></div>
+          <div><dt>工具呼叫</dt><dd id="uTools">0</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="chat" aria-label="對話與步驟">
+      <div class="log" id="log">
+        <div class="empty" id="empty">
+          <h2>你想讓 Agent 做什麼？</h2>
+          <p>它可以讀寫工作資料夾裡的檔案、執行指令（會先問你）、上網搜尋。試試：</p>
+          <div class="examples">
+            <button class="example">寫一個 Python 程式計算 1 到 100 的質數，執行它並告訴我結果</button>
+            <button class="example">搜尋 AI Agent 的最新發展，整理成 notes.md</button>
+            <button class="example">看看工作資料夾裡有什麼，幫我寫一份 README</button>
+          </div>
+        </div>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="input" rows="2" placeholder="輸入任務…（Enter 送出，Shift+Enter 換行）"></textarea>
+        <button type="submit" id="sendBtn">送出</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
