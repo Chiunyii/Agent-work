@@ -22,12 +22,14 @@
     --bg: #1f1e1c; --stage: #262522; --panel: #2b2a27; --ink: #ecebe6; --muted: #a3a29b;
     --line: #3a3935; --chip: #34332f; --accent-soft: #3d2a22; --code-bg: #232220;
     --shadow: 0 1px 2px rgb(0 0 0 / .3);
+    color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #1f1e1c; --stage: #262522; --panel: #2b2a27; --ink: #ecebe6; --muted: #a3a29b;
   --line: #3a3935; --chip: #34332f; --accent-soft: #3d2a22; --code-bg: #232220;
   --shadow: 0 1px 2px rgb(0 0 0 / .3);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
