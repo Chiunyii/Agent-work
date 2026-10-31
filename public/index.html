@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="toolbar">
-    <h1 class="title"><span aria-hidden="true">👀</span> 我的 Agent 在做什麼</h1>
+    <h1 class="title"><span aria-hidden="true">👀</span> 我的團隊在做什麼</h1>
     <div class="pills" aria-live="polite">
       <span class="pill" data-kind="needs"><i></i>需要你 <b id="cNeeds">0</b></span>
       <span class="pill" data-kind="working"><i></i>工作中 <b id="cWorking">0</b></span>
@@ -24,13 +24,13 @@
 
   <main class="stage">
     <section class="office-wrap">
-      <canvas id="office" aria-label="辦公室：Agent 的即時狀態"></canvas>
+      <canvas id="office" aria-label="辦公室：團隊的即時狀態"></canvas>
       <div class="legend" id="legend">
-        <span><i style="background:#8b6be6"></i>思考</span>
-        <span><i style="background:#3b8ee0"></i>執行工具</span>
-        <span><i style="background:#22a874"></i>撰寫</span>
-        <span><i style="background:#e09412"></i>等你</span>
-        <span><i style="background:#5f9a4c"></i>完成</span>
+        <span><i style="background:#8f7bc0"></i>思考</span>
+        <span><i style="background:#5b86a8"></i>執行工具</span>
+        <span><i style="background:#5f9474"></i>撰寫</span>
+        <span><i style="background:#c98a3a"></i>等你</span>
+        <span><i style="background:#6f9358"></i>完成</span>
       </div>
       <div class="version" id="version"></div>
       <button class="panel-tab" id="panelTab" title="展開面板">‹ 面板</button>
@@ -38,40 +38,28 @@
 
     <aside class="panel" id="panel">
       <div class="panel-head">
-        <span class="group-label" id="groupLabel">閒置</span>
+        <span class="group-label">工作團隊</span>
+        <span class="usage-total" id="usageTotal"></span>
         <button class="icon-btn" id="panelClose" title="收起面板">›</button>
       </div>
 
-      <article class="card" id="card">
-        <div class="card-top">
-          <span class="badge">Claude</span>
-          <strong class="card-name">Agent-work</strong>
-          <span class="card-time" id="timer"></span>
-        </div>
-        <div class="card-task" id="task">還沒有任務</div>
-        <div class="card-status" id="statusLine">
-          <span class="st-icon" id="stIcon">–</span>
-          <span class="st-label" id="statusText">閒置中</span>
-          <code class="st-detail" id="statusDetail"></code>
-        </div>
-        <div class="card-reply" id="lastReply"></div>
-        <div class="card-foot">
-          <span id="modelInfo"></span>
-          <span class="usage" id="usage">0 tokens · 0 個工具</span>
-        </div>
-      </article>
+      <div class="cards" id="cards"></div>
 
-      <div class="log" id="log">
+      <div class="filters" id="filters" role="tablist" aria-label="篩選時間軸">
+        <button class="chip on" data-filter="all">全部</button>
+      </div>
+
+      <div class="log" id="log" data-filter="all">
         <div class="empty" id="empty">
-          <p>給它一個任務，它會自己規劃步驟、使用工具完成。試試：</p>
-          <button class="example">寫一個 Python 程式計算 1 到 100 的質數，執行它並告訴我結果</button>
-          <button class="example">搜尋 AI Agent 的最新發展，整理成 notes.md</button>
-          <button class="example">看看工作資料夾裡有什麼，幫我寫一份 README</button>
+          <p>把任務交給<strong>矮子</strong>，他會拆解工作、交派給<strong>阿關</strong>和<strong>小雅</strong>，最後彙整回報。試試：</p>
+          <button class="example">我們下個月要推出一款環保保溫杯，請規劃上市宣傳：新聞稿和社群貼文</button>
+          <button class="example">週末要在市集辦快閃店，請準備媒體邀請函和三則 IG 貼文</button>
+          <button class="example">看看工作資料夾裡有什麼，幫我整理一份進度報告</button>
         </div>
       </div>
 
       <form class="composer" id="composer">
-        <textarea id="input" rows="2" placeholder="輸入任務…（Enter 送出，Shift+Enter 換行）"></textarea>
+        <textarea id="input" rows="2" placeholder="交代任務給矮子…（Enter 送出，Shift+Enter 換行）"></textarea>
         <button type="submit" id="sendBtn">送出</button>
       </form>
     </aside>

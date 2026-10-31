@@ -69,8 +69,8 @@ export const TOOL_DEFINITIONS = [
 export const NEEDS_APPROVAL = new Set(['run_command']);
 
 // With eager input streaming the API no longer validates tool input, so check it here.
-export function validateInput(name, input) {
-  const def = TOOL_DEFINITIONS.find((t) => t.name === name);
+export function validateInput(name, input, definitions = TOOL_DEFINITIONS) {
+  const def = definitions.find((t) => t.name === name);
   if (!def) return `unknown tool: ${name}`;
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return 'input must be an object';
   for (const key of def.input_schema.required) {
@@ -80,6 +80,7 @@ export function validateInput(name, input) {
     const prop = def.input_schema.properties[key];
     if (!prop) return `unexpected field: ${key}`;
     if (typeof value !== prop.type) return `field ${key} must be a ${prop.type}`;
+    if (prop.enum && !prop.enum.includes(value)) return `field ${key} must be one of: ${prop.enum.join(', ')}`;
   }
   return null;
 }

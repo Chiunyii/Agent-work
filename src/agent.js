@@ -1,34 +1,35 @@
 // The agent loop: ask Claude, run the tools it calls, feed the results back,
-// and repeat until it answers. Every step is emitted as an event for the UI.
+// and repeat until it answers. Every step is emitted as an event for the UI,
+// tagged with the agent's id so a team can share one event stream.
 import { EventEmitter } from 'node:events';
 import Anthropic from '@anthropic-ai/sdk';
 import { TOOL_DEFINITIONS, NEEDS_APPROVAL, validateInput, runTool } from './tools.js';
 
-const SYSTEM_PROMPT = `You are Agent-work, an autonomous assistant that completes tasks inside a workspace folder on the user's computer.
-
-You can list, read and write files in the workspace, run shell commands there, and search the web. Work in small, verifiable steps: look before you change things, and after you write code, run it to check that it works. If a command is declined, find another way or explain what you need.
+export const BASE_PROMPT = `You work inside a workspace folder on the user's computer. You can list, read and write files there, run shell commands there, and search the web. Work in small, verifiable steps: look before you change things, and after you write code, run it to check that it works. If a command is declined, find another way or explain what you need.
 
 When you finish, reply with a short summary of what you did and where the results are. Reply in the language the user writes in (for Traditional Chinese, use Traditional Chinese).`;
 
-const MAX_STEPS = 40; // model calls per user message, so a confused run can't loop forever
+const MAX_STEPS = 40; // model calls per message, so a confused run can't loop forever
 const MAX_JSON_RETRIES = 2;
 
 export class Agent extends EventEmitter {
   constructor({
+    id = 'agent',
+    name = 'Agent',
+    system = `You are Agent-work, an autonomous assistant.\n\n${BASE_PROMPT}`,
     workspace,
     model = 'claude-opus-5-5',
     effort = 'high',
     autoApprove = false,
     webSearch = true,
+    extraTools = [], // [{ definition, run(input, { id }), summary?(input) }] handled by the caller, e.g. delegation
     client = new Anthropic(),
   }) {
     super();
-    this.workspace = workspace;
-    this.model = model;
-    this.effort = effort;
-    this.autoApprove = autoApprove;
-    this.client = client;
-    this.tools = [...TOOL_DEFINITIONS];
+    Object.assign(this, { id, name, system, workspace, model, effort, autoApprove, client });
+    this.handlers = new Map(extraTools.map((t) => [t.definition.name, t]));
+    this.clientTools = [...TOOL_DEFINITIONS, ...extraTools.map((t) => t.definition)];
+    this.tools = [...this.clientTools];
     if (webSearch) this.tools.push({ type: 'web_search_20260209', name: 'web_search', max_uses: 5 });
     this.messages = [];
     this.busy = false;
@@ -38,15 +39,18 @@ export class Agent extends EventEmitter {
     this.abort = null;
   }
 
+  send(event) {
+    this.emit('event', { agent: this.id, ...event });
+  }
+
   status(status, detail = '', tool = '') {
-    this.emit('event', { type: 'status', status, detail, ...(tool && { tool }) });
+    this.send({ type: 'status', status, detail, ...(tool && { tool }) });
   }
 
   reset() {
     if (this.busy) throw new Error('agent is busy');
     this.messages = [];
     this.usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
-    this.emit('event', { type: 'reset' });
     this.status('idle');
   }
 
@@ -79,26 +83,29 @@ export class Agent extends EventEmitter {
     }
   }
 
-  async run(text) {
+  // Run one message to completion. `from` names a teammate who assigned it.
+  // Resolves to { ok, text } with the final reply; never throws.
+  async run(text, { from } = {}) {
     if (this.busy) throw new Error('agent is busy');
     this.busy = true;
     this.stopped = false;
     this.abort = new AbortController();
-    this.emit('event', { type: 'user', text });
-    this.addUserText(text);
+    this.send(from ? { type: 'task', from, text } : { type: 'user', text });
+    this.addUserText(from ? `${from} assigned you this task:\n\n${text}` : text);
     try {
-      await this.loop();
+      return { ok: true, text: await this.loop() };
     } catch (err) {
       if (this.stopped || err instanceof Anthropic.APIUserAbortError) {
         this.status('interrupted', '已停止');
-      } else {
-        this.emit('event', { type: 'error', message: describeError(err) });
-        this.status('error', describeError(err));
+        return { ok: false, text: 'stopped by the user' };
       }
+      this.send({ type: 'error', message: describeError(err) });
+      this.status('error', describeError(err));
+      return { ok: false, text: describeError(err) };
     } finally {
       this.busy = false;
       this.stream = null;
-      this.emit('event', { type: 'usage', usage: { ...this.usage } });
+      this.send({ type: 'usage', usage: { ...this.usage } });
     }
   }
 
@@ -119,9 +126,9 @@ export class Agent extends EventEmitter {
 
       if (message.stop_reason === 'refusal') {
         this.messages.push({ role: 'assistant', content: message.content });
-        this.emit('event', { type: 'turn_end', stop_reason: 'refusal' });
+        this.send({ type: 'turn_end', stop_reason: 'refusal' });
         this.status('error', '模型拒絕了這個請求');
-        return;
+        throw new Error('模型拒絕了這個請求');
       }
       if (message.stop_reason === 'pause_turn') {
         // A server tool (web search) paused a long turn; send it back to continue.
@@ -132,9 +139,9 @@ export class Agent extends EventEmitter {
       const toolUses = message.content.filter((b) => b.type === 'tool_use');
       if (toolUses.length === 0) {
         this.messages.push({ role: 'assistant', content: message.content });
-        this.emit('event', { type: 'turn_end', stop_reason: message.stop_reason });
+        this.send({ type: 'turn_end', stop_reason: message.stop_reason });
         this.status('done');
-        return;
+        return message.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
       }
       if (message.stop_reason === 'max_tokens') {
         // A tool input cut off at max_tokens may parse as a valid but truncated object.
@@ -142,8 +149,10 @@ export class Agent extends EventEmitter {
       }
 
       this.messages.push({ role: 'assistant', content: message.content });
-      const results = [];
-      for (const block of toolUses) results.push(await this.callTool(block));
+      // Handed-off work (delegation) runs side by side; local tools run one at a time.
+      const results = toolUses.every((b) => this.handlers.has(b.name))
+        ? await Promise.all(toolUses.map((b) => this.callTool(b)))
+        : await toolUses.reduce(async (acc, b) => [...(await acc), await this.callTool(b)], []);
       // All results go back in one user message so parallel tool calls keep working.
       this.messages.push({ role: 'user', content: results });
     }
@@ -154,7 +163,7 @@ export class Agent extends EventEmitter {
     const stream = this.client.beta.messages.stream({
       model: this.model,
       max_tokens: 64000,
-      system: SYSTEM_PROMPT,
+      system: this.system,
       thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: this.effort },
       // If a safety classifier declines, the API retries on a suitable fallback model.
@@ -173,21 +182,21 @@ export class Agent extends EventEmitter {
       else if (block.type === 'text') this.status('writing');
       else if (block.type === 'tool_use') this.status('running', `準備 ${block.name}…`, block.name);
       else if (block.type === 'server_tool_use') this.status('running', block.name, block.name);
-      this.emit('event', { type: 'block_start', kind: block.type, name: block.name });
+      this.send({ type: 'block_start', kind: block.type, name: block.name });
     });
-    stream.on('thinking', (delta) => this.emit('event', { type: 'thinking_delta', text: delta }));
-    stream.on('text', (delta) => this.emit('event', { type: 'text_delta', text: delta }));
+    stream.on('thinking', (delta) => this.send({ type: 'thinking_delta', text: delta }));
+    stream.on('text', (delta) => this.send({ type: 'text_delta', text: delta }));
     stream.on('contentBlock', (block) => {
       if (block.type === 'server_tool_use') {
-        this.emit('event', { type: 'tool_start', id: block.id, name: block.name, input: block.input, server: true });
+        this.send({ type: 'tool_start', id: block.id, name: block.name, input: block.input, server: true });
       } else if (block.type === 'web_search_tool_result') {
         const ok = Array.isArray(block.content);
         const output = ok
           ? block.content.map((r) => `${r.title}\n${r.url}`).join('\n\n')
           : `搜尋失敗：${block.content?.error_code}`;
-        this.emit('event', { type: 'tool_end', id: block.tool_use_id, ok, output });
+        this.send({ type: 'tool_end', id: block.tool_use_id, ok, output });
       } else if (block.type === 'fallback') {
-        this.emit('event', { type: 'notice', text: `${block.from?.model} 拒絕，改由 ${block.to?.model} 接手` });
+        this.send({ type: 'notice', text: `${block.from?.model} 拒絕，改由 ${block.to?.model} 接手` });
       }
     });
 
@@ -196,23 +205,30 @@ export class Agent extends EventEmitter {
 
   async callTool(block) {
     const { id, name, input } = block;
-    this.emit('event', { type: 'tool_start', id, name, input });
+    this.send({ type: 'tool_start', id, name, input });
     const result = (content, isError = false) => {
-      this.emit('event', { type: 'tool_end', id, ok: !isError, output: content });
+      this.send({ type: 'tool_end', id, ok: !isError, output: content });
       return { type: 'tool_result', tool_use_id: id, content, ...(isError && { is_error: true }) };
     };
 
-    const invalid = validateInput(name, input);
+    const invalid = validateInput(name, input, this.clientTools);
     if (invalid) return result(`INVALID_INPUT: ${invalid}`, true);
     if (this.stopped) return result('stopped by the user', true);
+
+    const handler = this.handlers.get(name);
+    if (handler) {
+      this.status('running', handler.summary?.(input) ?? name, name);
+      const { ok, text } = await handler.run(input, { id });
+      return result(text, !ok);
+    }
 
     if (NEEDS_APPROVAL.has(name) && !this.autoApprove) {
       this.status('waiting', `等你核准：${name}`, name);
       // Register the pending approval before announcing it, so an immediate answer isn't lost.
       const decision = new Promise((resolve) => this.pendingApprovals.set(id, resolve));
-      this.emit('event', { type: 'approval', id, name, input });
+      this.send({ type: 'approval', id, name, input });
       const allowed = await decision;
-      this.emit('event', { type: 'approval_done', id, allowed });
+      this.send({ type: 'approval_done', id, allowed });
       if (!allowed) return result('The user declined to run this.', true);
     }
 
@@ -229,7 +245,7 @@ export class Agent extends EventEmitter {
     this.usage.input_tokens += (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0);
     this.usage.cache_read_input_tokens += usage.cache_read_input_tokens ?? 0;
     this.usage.output_tokens += usage.output_tokens ?? 0;
-    this.emit('event', { type: 'usage', usage: { ...this.usage } });
+    this.send({ type: 'usage', usage: { ...this.usage } });
   }
 }
 

@@ -106,3 +106,54 @@ test('a message after an interrupted turn keeps roles alternating', async () => 
   assert.equal(agent.messages.length, 3);
   assert.deepEqual(agent.messages[2].content.at(-1), { type: 'text', text: '繼續' });
 });
+
+test('the lead delegates to teammates in parallel and gets their reports back', async () => {
+  const { Team } = await import('../src/team.js');
+  const workspace = await tmp();
+  const say = (text) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text }] });
+  const clients = {
+    aizi: fakeClient([
+      {
+        stop_reason: 'tool_use',
+        content: [
+          { type: 'tool_use', id: 'd1', name: 'delegate', input: { member: 'aguan', task: '寫新聞稿到 pr.md' } },
+          { type: 'tool_use', id: 'd2', name: 'delegate', input: { member: 'xiaoya', task: '寫貼文到 posts.md' } },
+        ],
+      },
+      say('都完成了'),
+    ]),
+    aguan: fakeClient([
+      { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'w1', name: 'write_file', input: { path: 'pr.md', content: 'press' } }] },
+      say('新聞稿在 pr.md'),
+    ]),
+    xiaoya: fakeClient([say('貼文在 posts.md')]),
+  };
+  const team = new Team({ workspace, clients, webSearch: false });
+  const events = [];
+  team.on('event', (e) => events.push(e));
+
+  await team.run('上市宣傳');
+
+  const results = clients.aizi.requests[1].messages[2].content;
+  assert.deepEqual(results.map((r) => r.tool_use_id), ['d1', 'd2']);
+  assert.match(results[0].content, /阿關 回報：\n新聞稿在 pr.md/);
+  assert.match(results[1].content, /小雅 回報：\n貼文在 posts.md/);
+  assert.equal(await fs.readFile(nodePath.join(workspace, 'pr.md'), 'utf8'), 'press');
+  assert.match(clients.aguan.requests[0].messages[0].content, /^矮子 assigned you this task:/);
+  assert.ok(events.some((e) => e.type === 'task' && e.agent === 'xiaoya' && e.from === '矮子'));
+  assert.ok(!clients.aguan.requests[0].tools.some((t) => t.name === 'delegate'), 'only the lead can delegate');
+  // Both teammates were working at the same time.
+  const firstDone = events.findIndex((e) => e.type === 'status' && e.status === 'done');
+  const started = new Set(events.slice(0, firstDone).filter((e) => e.type === 'task').map((e) => e.agent));
+  assert.deepEqual([...started].sort(), ['aguan', 'xiaoya']);
+  assert.equal(team.busy, false);
+});
+
+test('delegating to a busy teammate is refused instead of interrupting them', async () => {
+  const { Team } = await import('../src/team.js');
+  const team = new Team({ workspace: await tmp(), clients: {}, webSearch: false });
+  team.members.get('aguan').busy = true;
+  const reply = await team.delegate({ name: '矮子' }, { member: 'aguan', task: 'x' });
+  assert.equal(reply.ok, false);
+  assert.match(reply.text, /阿關 正在忙/);
+});
