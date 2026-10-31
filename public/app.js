@@ -1,7 +1,7 @@
 // Page logic: listens to the agent's event stream and draws the office + timeline.
 const $ = (id) => document.getElementById(id);
 const log = $('log');
-const scene = $('scene');
+const emptyState = $('empty').cloneNode(true); // shown again after a reset
 
 const STATUS = {
   idle: { label: '閒置中', icon: '–', color: 'var(--muted)' },
@@ -21,48 +21,62 @@ let toolCount = 0;
 let busy = false;
 let turnStart = null;
 
-// ---------- office decoration ----------
-(function drawCode() {
-  const g = $('code');
-  const ns = 'http://www.w3.org/2000/svg';
-  for (let i = 0; i < 16; i++) {
-    const r = document.createElementNS(ns, 'rect');
-    r.setAttribute('x', 148 + (i % 3) * 4);
-    r.setAttribute('y', 72 + i * 5);
-    r.setAttribute('width', 12 + ((i * 37) % 38));
-    r.setAttribute('height', 2.5);
-    r.setAttribute('rx', 1);
-    g.appendChild(r);
-  }
-})();
-(function paintSky() {
-  const h = new Date().getHours();
-  const sky = h < 6 || h >= 19 ? 'linear-gradient(#0f172a,#1e3a8a)' : h < 9 ? 'linear-gradient(#fdba74,#93c5fd)' : h < 17 ? 'linear-gradient(#7dd3fc,#e0f2fe)' : 'linear-gradient(#f97316,#7c3aed)';
-  $('sky').style.background = sky;
-})();
+// ---------- office + card ----------
+const office = new window.Office($('office'), {
+  onClick: () => {
+    document.body.classList.remove('panel-closed');
+    const card = $('card');
+    card.classList.add('flash');
+    setTimeout(() => card.classList.remove('flash'), 900);
+  },
+});
+let status = 'idle';
+let detail = '';
+let usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
 
-// ---------- status ----------
-function setStatus(status, detail) {
-  const s = STATUS[status] ?? STATUS.idle;
-  scene.dataset.status = status;
+function setStatus(next, info = {}) {
+  status = next;
+  detail = info.detail || defaultDetail(next);
+  const s = STATUS[next] ?? STATUS.idle;
+  office.setStatus(next, { detail, tool: info.tool });
+  $('card').dataset.status = next;
+  $('stIcon').textContent = s.icon;
   $('statusText').textContent = s.label;
-  $('dot').style.background = s.color;
-  $('statusDetail').textContent = detail || defaultDetail(status);
-  const bubble = $('bubble');
-  const say = { thinking: '💭 …', waiting: '🙋 需要你核准！', done: '✅ 完成了', error: '❗ 出錯了', running: `⏳ ${detail || ''}`, writing: '✍️ 寫回覆中' }[status];
-  bubble.textContent = say ?? '';
-  bubble.classList.toggle('show', Boolean(say));
+  $('statusDetail').textContent = detail;
+  const working = ['thinking', 'running', 'writing'].includes(next);
+  const needs = next === 'waiting' || next === 'error';
+  $('cNeeds').textContent = needs ? 1 : 0;
+  $('cWorking').textContent = working ? 1 : 0;
+  $('cFinished').textContent = next === 'done' ? 1 : 0;
+  document.querySelector('.pill[data-kind="needs"]').classList.toggle('on', needs);
+  $('groupLabel').textContent = needs ? '需要你' : working ? '工作中' : next === 'done' ? '已完成' : '閒置';
   document.title = `${s.icon} ${s.label} · Agent-work`;
-  if (['done', 'error', 'interrupted', 'idle'].includes(status)) turnStart = null;
+  if (['done', 'error', 'interrupted', 'idle'].includes(next)) turnStart = null;
 }
-function defaultDetail(status) {
-  return { idle: '給我一個任務，我會自己規劃步驟、使用工具完成它。', thinking: '正在推理下一步…', writing: '正在寫給你的回覆', done: '這一輪完成了，可以繼續交代下一件事。' }[status] ?? '';
+function defaultDetail(s) {
+  return { thinking: '正在推理下一步', writing: '正在寫給你的回覆' }[s] ?? '';
+}
+function showUsage() {
+  const total = usage.input_tokens + usage.cache_read_input_tokens + usage.output_tokens;
+  $('usage').textContent = `${total.toLocaleString()} tokens · ${toolCount} 個工具`;
+  $('usage').title = `輸入 ${usage.input_tokens.toLocaleString()}／快取讀取 ${usage.cache_read_input_tokens.toLocaleString()}／輸出 ${usage.output_tokens.toLocaleString()}`;
 }
 setInterval(() => {
   if (!turnStart) return ($('timer').textContent = '');
   const s = Math.floor((Date.now() - turnStart) / 1000);
-  $('timer').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  $('timer').textContent = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }, 500);
+
+// Hovering the agent in the office shows what it is doing.
+$('office').addEventListener('mousemove', (ev) => {
+  const tip = $('tooltip');
+  if (!office.hover) return (tip.hidden = true);
+  tip.hidden = false;
+  tip.replaceChildren(el('b', null, `Claude · ${STATUS[status]?.label ?? status}`), el('span', null, detail || $('task').textContent));
+  tip.style.left = `${ev.clientX + 14}px`;
+  tip.style.top = `${ev.clientY + 14}px`;
+});
+$('office').addEventListener('mouseleave', () => ($('tooltip').hidden = true));
 
 function setBusy(value) {
   busy = value;
@@ -109,16 +123,21 @@ function describeTool(name, input = {}) {
 function handle(e) {
   switch (e.type) {
     case 'reset':
-      log.replaceChildren();
+      log.replaceChildren(emptyState.cloneNode(true));
       tools.clear();
       toolCount = 0;
-      $('uTools').textContent = 0;
+      usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 };
+      showUsage();
+      $('task').textContent = '還沒有任務';
+      $('lastReply').textContent = '';
       current = null;
       break;
     case 'user': {
       const m = el('div', 'msg user');
       m.append(el('div', 'body', e.text));
       append(m);
+      $('task').textContent = e.text;
+      $('lastReply').textContent = '';
       current = null;
       turnStart = e.at;
       setBusy(true);
@@ -144,6 +163,7 @@ function handle(e) {
     case 'text_delta':
       if (current?.classList.contains('reply')) {
         current.querySelector('.body').textContent += e.text;
+        $('lastReply').textContent = `← ${firstLine(current.querySelector('.body').textContent)}`;
         stick();
       }
       break;
@@ -152,7 +172,8 @@ function handle(e) {
       d.querySelector('.state').textContent = '執行中…';
       if (e.name === 'write_file') d.querySelector('pre').textContent = e.input.content ?? '';
       tools.set(e.id, d);
-      $('uTools').textContent = ++toolCount;
+      toolCount++;
+      showUsage();
       current = null;
       break;
     }
@@ -194,13 +215,12 @@ function handle(e) {
       break;
     }
     case 'status':
-      setStatus(e.status, e.detail);
+      setStatus(e.status, e);
       if (['done', 'error', 'interrupted', 'idle'].includes(e.status)) setBusy(false);
       break;
     case 'usage':
-      $('uIn').textContent = e.usage.input_tokens.toLocaleString();
-      $('uCache').textContent = e.usage.cache_read_input_tokens.toLocaleString();
-      $('uOut').textContent = e.usage.output_tokens.toLocaleString();
+      usage = e.usage;
+      showUsage();
       break;
   }
 }
@@ -216,7 +236,8 @@ function connect() {
     const e = JSON.parse(msg.data);
     if (e.type !== 'hello') return handle(e);
     const { model, effort, workspace, autoApprove } = e.info;
-    $('meta').textContent = `${model} · effort ${effort} · 工作資料夾 ${workspace}${autoApprove ? ' · 自動核准' : ''}`;
+    $('modelInfo').textContent = `${model} · effort ${effort}`;
+    $('version').textContent = `工作資料夾 ${workspace}${autoApprove ? ' · 自動核准' : ''}`;
     // Replay what happened before this page connected.
     const hadHistory = e.history.length > 0;
     if (hadHistory) handle({ type: 'reset' });
@@ -253,6 +274,19 @@ $('input').addEventListener('keydown', (ev) => {
 });
 $('stopBtn').onclick = () => post('/api/stop');
 $('resetBtn').onclick = () => post('/api/reset');
+$('panelClose').onclick = () => document.body.classList.add('panel-closed');
+$('panelTab').onclick = () => document.body.classList.remove('panel-closed');
+$('themeBtn').onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('theme', root.dataset.theme); } catch {}
+  office.refreshTheme();
+};
+try {
+  const saved = localStorage.getItem('theme');
+  if (saved) { document.documentElement.dataset.theme = saved; office.refreshTheme(); }
+} catch {}
 log.addEventListener('click', (ev) => {
   const ex = ev.target.closest('.example');
   if (ex) { $('input').value = ex.textContent; $('input').focus(); }

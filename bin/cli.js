@@ -32,7 +32,7 @@ if (opts.help) {
   node bin/cli.js -t "任務內容"    在終端機直接執行一個任務
 
 選項：
-  -p, --port <n>        網頁埠號（預設 4546）
+  -p, --port <n>        網頁埠號（預設 4546，被占用時自動往後找）
       --host <addr>     綁定位址（預設 127.0.0.1，只有本機能連）
   -w, --workspace <dir> Agent 可以讀寫、執行指令的資料夾（預設 ./workspace）
       --model <id>      模型（預設 claude-opus-5-5）
@@ -60,7 +60,7 @@ const agent = new Agent({
   effort: opts.effort,
   autoApprove: opts['auto-approve'],
   webSearch: !opts['no-web'],
-  ...(opts.demo && { client: fakeClient(DEMO_TURNS, { delayMs: 40 }) }),
+  ...(opts.demo && { client: fakeClient(DEMO_TURNS, { delayMs: 40, repeat: true }) }),
 });
 
 if (opts.task) {
@@ -72,7 +72,14 @@ if (opts.task) {
 function startServer() {
   const info = { model: opts.demo ? 'demo（未連線模型）' : opts.model, effort: opts.effort, workspace, autoApprove: agent.autoApprove };
   const server = createServer(agent, { info });
-  server.listen(Number(opts.port), opts.host, () => {
+  let port = Number(opts.port);
+  server.on('error', (err) => {
+    // Port taken: try the next one, a few times.
+    if (err.code === 'EADDRINUSE' && port < Number(opts.port) + 10) return server.listen(++port, opts.host);
+    console.error(`無法啟動伺服器：${err.message}`);
+    process.exit(1);
+  });
+  server.listen(port, opts.host, () => {
     const url = `http://${opts.host === '0.0.0.0' ? 'localhost' : opts.host}:${server.address().port}`;
     console.log(`Agent-work 已啟動：${url}`);
     console.log(`工作資料夾：${workspace}`);

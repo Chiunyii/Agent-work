@@ -38,8 +38,8 @@ export class Agent extends EventEmitter {
     this.abort = null;
   }
 
-  status(status, detail = '') {
-    this.emit('event', { type: 'status', status, detail });
+  status(status, detail = '', tool = '') {
+    this.emit('event', { type: 'status', status, detail, ...(tool && { tool }) });
   }
 
   reset() {
@@ -171,8 +171,8 @@ export class Agent extends EventEmitter {
       const block = event.content_block;
       if (block.type === 'thinking') this.status('thinking');
       else if (block.type === 'text') this.status('writing');
-      else if (block.type === 'tool_use') this.status('running', `準備 ${block.name}…`);
-      else if (block.type === 'server_tool_use') this.status('running', `${block.name}`);
+      else if (block.type === 'tool_use') this.status('running', `準備 ${block.name}…`, block.name);
+      else if (block.type === 'server_tool_use') this.status('running', block.name, block.name);
       this.emit('event', { type: 'block_start', kind: block.type, name: block.name });
     });
     stream.on('thinking', (delta) => this.emit('event', { type: 'thinking_delta', text: delta }));
@@ -207,7 +207,7 @@ export class Agent extends EventEmitter {
     if (this.stopped) return result('stopped by the user', true);
 
     if (NEEDS_APPROVAL.has(name) && !this.autoApprove) {
-      this.status('waiting', `等你核准：${name}`);
+      this.status('waiting', `等你核准：${name}`, name);
       // Register the pending approval before announcing it, so an immediate answer isn't lost.
       const decision = new Promise((resolve) => this.pendingApprovals.set(id, resolve));
       this.emit('event', { type: 'approval', id, name, input });
@@ -216,7 +216,7 @@ export class Agent extends EventEmitter {
       if (!allowed) return result('The user declined to run this.', true);
     }
 
-    this.status('running', summarizeCall(name, input));
+    this.status('running', summarizeCall(name, input), name);
     try {
       return result(await runTool(name, input, { workspace: this.workspace, signal: this.abort.signal }));
     } catch (err) {

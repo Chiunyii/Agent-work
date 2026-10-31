@@ -2,7 +2,7 @@
 // Used by the tests and by --demo, so the agent and page run without an API key.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export function fakeClient(turns, { delayMs = 0 } = {}) {
+export function fakeClient(turns, { delayMs = 0, repeat = false } = {}) {
   const requests = [];
   const script = [...turns];
   return {
@@ -11,6 +11,7 @@ export function fakeClient(turns, { delayMs = 0 } = {}) {
       messages: {
         stream(params) {
           requests.push(structuredClone(params));
+          if (repeat && script.length === 0) script.push(...turns);
           const turn = script.shift() ?? DEMO_FALLBACK;
           const handlers = {};
           let aborted = false;
